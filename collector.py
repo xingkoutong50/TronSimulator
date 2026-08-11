@@ -59,7 +59,6 @@ CSV_FILES = {
     "15s": "/data/history_15s.csv",
     "30s": "/data/history_30s.csv",
     "1min": "/data/history_1min.csv"
-}: "history_1min.csv"
 }
 
 
