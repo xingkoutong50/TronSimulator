@@ -6,12 +6,121 @@ import threading
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+from datetime import datetime
 
 # 第三方库
 import requests
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-PORT = 8081
+PORT = int(os.environ.get("PORT", 8080))
+
+
+# ========== 采集器配置 ==========
+API_URL = "https://api.trongrid.io/wallet/getnowblock"
+BLOCK_API = "https://api.trongrid.io/wallet/getblockbynum"
+
+GAME_CONFIG = {
+    "6s": {"name": "6秒哈希", "seconds": 6, "suffix": 80, "block_interval": 2},
+    "9s": {"name": "9秒哈希", "seconds": 9, "suffix": 60, "block_interval": 3},
+    "15s": {"name": "15秒哈希", "seconds": 15, "suffix": 40, "block_interval": 5},
+    "30s": {"name": "30秒哈希", "seconds": 30, "suffix": 20, "block_interval": 10},
+    "1min": {"name": "1分钟哈希", "seconds": 60, "suffix": 0, "block_interval": 20},
+}
+
+collector_csv_files = {
+    "6s": "/data/history_6s.csv",
+    "9s": "/data/history_9s.csv",
+    "15s": "/data/history_15s.csv",
+    "30s": "/data/history_30s.csv",
+    "1min": "/data/history_1min.csv",
+}
+
+collector_last_blocks = {g: None for g in GAMES}
+collector_locks = {g: threading.Lock() for g in GAMES}
+
+def collector_get_now_block():
+    try:
+        r = requests.get(API_URL, timeout=10)
+        data = r.json()
+        return data["block_header"]["raw_data"]["number"], data["blockID"]
+    except Exception as e:
+        print(f"[TRON] 获取最新区块失败: {e}")
+        return None, None
+
+def collector_get_block_hash(height):
+    try:
+        r = requests.post(BLOCK_API, json={"num": height}, timeout=10)
+        return r.json().get("blockID")
+    except Exception as e:
+        print(f"[TRON] 获取区块 {height} 失败: {e}")
+        return None
+
+def collector_analyze_hash(block_hash):
+    tail6 = block_hash[-6:]
+    number = 0
+    for c in reversed(block_hash):
+        if c.isdigit():
+            number = int(c)
+            break
+    odd_even = "单" if number % 2 else "双"
+    big_small = "大" if number >= 5 else "小"
+    return tail6, number, odd_even, big_small
+
+def collector_init_csv(game):
+    filename = collector_csv_files[game]
+    if not os.path.exists(filename):
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["时间", "区块高度", "Hash", "Hash尾6", "尾数", "单双", "大小"])
+
+def collector_save_data(game, height, block_hash, tail6, number, odd_even, big_small):
+    filename = collector_csv_files[game]
+    with open(filename, "a", newline="", encoding="utf-8", buffering=1) as f:
+        writer = csv.writer(f)
+        writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), height, block_hash, tail6, number, odd_even, big_small])
+        f.flush()
+
+def collector_run_all_games():
+    current_height, _ = collector_get_now_block()
+    if current_height is None:
+        return
+    for game in GAMES:
+        try:
+            with collector_locks[game]:
+                interval = GAME_CONFIG[game]["block_interval"]
+                target_height = (current_height // interval) * interval
+                if collector_last_blocks[game] == target_height:
+                    continue
+                block_hash = collector_get_block_hash(target_height)
+                if block_hash is None:
+                    continue
+                tail6, number, odd_even, big_small = collector_analyze_hash(block_hash)
+                print(f"[采集] {game} 区块:{target_height} 尾数:{number} {odd_even}{big_small}")
+                collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
+                collector_last_blocks[game] = target_height
+        except Exception as e:
+            print(f"[采集错误] {game}: {e}")
+
+def collector_main():
+    print("[采集] 正在初始化...")
+    sync_height, _ = collector_get_now_block()
+    if sync_height is None:
+        print("[采集错误] 无法连接TRON节点")
+        return
+    for game in GAMES:
+        collector_init_csv(game)
+        interval = GAME_CONFIG[game]["block_interval"]
+        collector_last_blocks[game] = (sync_height // interval) * interval
+        print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
+    print("[采集] 启动完成")
+    while True:
+        try:
+            collector_run_all_games()
+        except Exception as e:
+            print(f"[采集严重错误] {e}")
+        time.sleep(1)
+
+
 
 # ========== TRON API ==========
 TRON_API = "https://api.trongrid.io/wallet/getnowblock"
@@ -37,11 +146,11 @@ GAME_SUFFIX = {
 }
 
 GAME_DATA_FILES = {
-    "6s": "game_data/6s.csv",
-    "9s": "game_data/9s.csv",
-    "15s": "game_data/15s.csv",
-    "1min": "game_data/1min.csv",
-    "30s": "game_data/30s.csv",
+    "6s": "/data/history_6s.csv",
+    "9s": "/data/history_9s.csv",
+    "15s": "/data/history_15s.csv",
+    "1min": "/data/history_1min.csv",
+    "30s": "/data/history_30s.csv",
 }
 PREDICT_FILE = "block_prediction_log_v67.csv"
 
@@ -220,7 +329,7 @@ def fetch_game_block(game):
 
 def load_realtime_from_csv(game):
 
-    filename = f"history_{game}.csv"
+    filename = f"/data/history_{game}.csv"
 
     cache_key = f"realtime_{game}"
 
@@ -1102,29 +1211,26 @@ def make_ball(n, size=32, animated=True):
     ani = 'floatBall' if animated else ''
     return f'<span class="{ani}" style="display:inline-flex;width:{size}px;height:{size}px;border-radius:50%;background:{c};color:white;font-weight:700;font-size:{fs}px;align-items:center;justify-content:center;margin:2px;box-shadow:0 2px 4px rgba(0,0,0,.15);">{n}</span>'
 
-# ========== 启动 ==========
 if __name__ == "__main__":
     print("[启动] 正在初始化...")
     preload_all_data()
-        # 预热完成后创建标记文件
     with open("/tmp/ready", "w") as f:
         f.write("ok")
     print("[预热] 完成！")
     
-    # --- 新增：启动文件变动监控 ---
     observer = start_file_watcher()
-    # ------------------------------
     
     refresh_thread = threading.Thread(target=background_refresh, daemon=True)
     refresh_thread.start()
     print("[启动] 后台刷新线程已启动（每5秒刷新）")
+    
+    collector_thread = threading.Thread(target=collector_main, daemon=True)
+    collector_thread.start()
+    print("[采集] 后台采集线程已启动")
     
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
     
     server = ThreadedHTTPServer(('0.0.0.0', PORT), Handler)
     print(f"[网页] 已启动 http://0.0.0.0:{PORT}")
-    print(f"[提示] 倒计时每秒更新 | 数据文件变动时自动刷新")
-    print(f"[玩法] {', '.join([GAME_DISPLAY_NAMES.get(g, g) for g in GAMES])}")
-    print(f"[规则] 6秒尾数80 | 9秒尾数60 | 15秒尾数40 | 30秒尾数20 | 1分钟尾数00")
     server.serve_forever()
