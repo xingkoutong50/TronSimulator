@@ -507,21 +507,26 @@ def calc_stat_from_logs(game_logs):
     }
 
 def preload_all_data():
-
     print("[预加载] 开始加载所有数据...")
-
-
     for g in GAMES:
-
         load_realtime_from_csv(g)
-
         load_game_history(g)
-
-
     load_predict_logs()
-
-
-    print("[预加载] 数据加载完成！")
+    
+    # 预热：提前计算统计数据和预测结果
+    print("[预热] 正在预计算统计数据...")
+    for g in GAMES:
+        history_data = load_game_history(g)
+        stat_logs = []
+        for i in range(50, len(history_data)):
+            slice_data = history_data[max(0, i-200):i]
+            model = choose_model(slice_data)
+            actual = history_data[i]["result"]
+            stat_logs.append({
+                "result": "命中" if actual == model["predict"] else "错误"
+            })
+        cache.set(f"precalc_stats_{g}", calc_stat_from_logs(stat_logs))
+    print("[预热] 完成！")
 
 def background_refresh():
     while True:
@@ -608,16 +613,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 all_data[g] = data
 
-                history_data = load_game_history(g)
-                stat_logs = []
-                for i in range(50, len(history_data)):
-                    slice_data = history_data[max(0, i-200):i]
-                    model = choose_model(slice_data)
-                    actual = history_data[i]["result"]
-                    stat_logs.append({
-                        "result": "命中" if actual == model["predict"] else "错误"
-                    })
-                all_stats[g] = calc_stat_from_logs(stat_logs)
+                all_stats[g] = cache.get(f"precalc_stats_{g}") or {"total": 0, "hits": 0, "misses": 0, "hit_rate": 0, "max_win": 0, "max_lose": 0, "current_status": "无"}
 
             print("C开始生成实时页面")
 
