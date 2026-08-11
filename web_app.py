@@ -545,21 +545,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # 快速响应健康检查
         if self.path == '/health':
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
+            if os.path.exists("/tmp/ready"):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(503)
+                self.end_headers()
             return
-        if self.path == '/api/latest':
-            all_data = {}
-            for g in GAMES:
-                data = load_realtime_from_csv(g)
-                all_data[g] = data[-1] if data else {}
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(all_data).encode())
-            return
-        
         if self.path == '/api/time':
             tron_ts = get_tron_timestamp()
             if tron_ts is None:
@@ -1113,6 +1106,10 @@ def make_ball(n, size=32, animated=True):
 if __name__ == "__main__":
     print("[启动] 正在初始化...")
     preload_all_data()
+        # 预热完成后创建标记文件
+    with open("/tmp/ready", "w") as f:
+        f.write("ok")
+    print("[预热] 完成！")
     
     # --- 新增：启动文件变动监控 ---
     observer = start_file_watcher()
