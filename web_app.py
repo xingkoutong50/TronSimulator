@@ -1,12 +1,16 @@
+import json
 import os
 import csv
 import time
 import threading
-import requests
+from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from collections import defaultdict
 
+# 第三方库
+import requests
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 PORT = 8081
 
 # ========== TRON API ==========
@@ -25,11 +29,11 @@ GAME_DISPLAY_NAMES = {
 }
 
 GAME_SUFFIX = {
-    "6s": 80,
-    "9s": 60,
-    "15s": 40,
-    "30s": 20,
-    "1min": 0
+    "6s": 2,
+    "9s": 3,
+    "15s": 5,
+    "30s": 10,
+    "1min": 20
 }
 
 GAME_DATA_FILES = {
@@ -70,6 +74,29 @@ class DataCache:
 
 cache = DataCache(ttl_seconds=8)
 
+# ========== 文件变动监控器 ==========
+class CSVFileChangeHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        # 只处理 CSV 文件的修改事件
+        if event.is_directory:
+            return
+        if event.src_path.endswith('.csv'):
+            print(f"[监控] 检测到文件变动: {event.src_path}，正在清空缓存...")
+            cache.clear() # 核心操作：清空缓存，强制下次请求时重新读取文件
+
+def start_file_watcher():
+    # 监控当前目录下的所有文件变动
+    event_handler = CSVFileChangeHandler()
+    observer = Observer()
+    observer.schedule(event_handler, path='.', recursive=False)
+    observer.start()
+    print("[监控] 已启动文件变动监控...")
+    return observer
+
+# ========== TRON 链上时间缓存 ==========
+_tron_time_cache = None
+_tron_time_cache_time = 0
+
 # ========== 获取倒计时 ==========
 def get_countdown(game):
     if game == "6s":
@@ -84,11 +111,36 @@ def get_countdown(game):
         total = 60
     else:
         total = 30
-    current = int(time.time()) % total
+
+    tron_time = get_tron_timestamp()
+    if tron_time is None:
+        tron_time = int(time.time())
+
+    current = tron_time % total
     remaining = total - current
     if remaining == 0:
         remaining = total
-    return remaining, total
+
+    return remaining, total, tron_time
+def get_tron_timestamp():
+    """获取当前 TRON 区块链时间戳（秒级），缓存 2 秒减少 API 调用"""
+    global _tron_time_cache, _tron_time_cache_time
+    now = time.time()
+    if _tron_time_cache is not None and now - _tron_time_cache_time < 2:
+        return int(_tron_time_cache + (now - _tron_time_cache_time))
+    for retry in range(3):
+        try:
+            r = requests.get(TRON_API, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                tron_ts = int(data.get("timestamp", 0) // 1000)
+                _tron_time_cache = tron_ts
+                _tron_time_cache_time = now
+                return tron_ts
+        except Exception:
+            pass
+        time.sleep(1)
+    return None
 
 # ========== 获取指定区块 ==========
 def get_block_by_number(height):
@@ -182,53 +234,30 @@ def load_realtime_from_csv(game):
 
 
     if os.path.exists(filename):
-
         try:
-
-            with open(
-                filename,
-                "r",
-                encoding="utf-8",
-                errors="ignore"
-            ) as f:
-
+            # 核心修改：使用 'r' 模式打开，并强制刷新文件指针
+            with open(filename, "r", encoding="utf-8", errors="ignore") as f:
+                # 确保每次读取都从文件最新位置开始
+                f.seek(0, os.SEEK_END) 
+                f.seek(0, os.SEEK_SET)
+                
                 reader = csv.reader(f)
-
                 header = next(reader, None)
-
-
                 for row in reader:
-
                     if len(row) < 7:
                         continue
-
-
                     try:
-
                         data.append({
-
                             "block": row[1],
-
                             "hash6": row[3],
-
                             "tail": row[4],
-
                             "result": row[5],
-
                             "size": row[6],
-
                         })
-
-
                     except:
-
                         continue
-
-
         except:
-
             pass
-
 
 
     # 只使用 collector.py 生成的数据
@@ -313,7 +342,7 @@ def load_game_history(game):
         pass
     
     if len(data) > 500:
-        data = data[-500:]
+        data = data[-10000:]
     cache.set(cache_key, data)
     return data
 
@@ -336,7 +365,7 @@ def realtime_predict(block_hash, game):
 
         count = 0
 
-        while next_block % 20 != suffix and count < 20:
+        while next_block % suffix != 0 and count < 20:
             next_block += 1
             count += 1
 
@@ -379,6 +408,33 @@ def realtime_predict(block_hash, game):
         "last_num": last_num
 
     }
+
+
+def choose_model(data):
+    best = None
+    for length in [3, 2, 1]:
+        table = defaultdict(lambda: {"单": 0, "双": 0})
+        for i in range(len(data) - length):
+            key = "".join(x["tail"] for x in data[i:i+length])
+            real = data[i+length]["result"]
+            table[key][real] += 1
+        key = "".join(x["tail"] for x in data[-length:])
+        if key not in table:
+            continue
+        s = table[key]["单"]
+        d = table[key]["双"]
+        total = s + d
+        if total < 5:
+            continue
+        predict = "单" if s > d else "双"
+        rate = max(s, d) / total * 100
+        score = rate * (total / (total + 10))
+        item = {"model": f"Hash {length}位", "predict": predict, "rate": round(rate, 2), "score": round(score, 2)}
+        if best is None or score > best["score"]:
+            best = item
+    if best:
+        return best
+    return {"model": "默认", "predict": "双", "rate": 50, "score": 0}    
 
 def calc_stat_from_logs(game_logs):
     if not game_logs:
@@ -451,21 +507,26 @@ def calc_stat_from_logs(game_logs):
     }
 
 def preload_all_data():
-
     print("[预加载] 开始加载所有数据...")
-
-
     for g in GAMES:
-
         load_realtime_from_csv(g)
-
         load_game_history(g)
-
-
     load_predict_logs()
-
-
-    print("[预加载] 数据加载完成！")
+    
+    # 预热：提前计算统计数据和预测结果
+    print("[预热] 正在预计算统计数据...")
+    for g in GAMES:
+        history_data = load_game_history(g)
+        stat_logs = []
+        for i in range(50, len(history_data)):
+            slice_data = history_data[max(0, i-200):i]
+            model = choose_model(slice_data)
+            actual = history_data[i]["result"]
+            stat_logs.append({
+                "result": "命中" if actual == model["predict"] else "错误"
+            })
+        cache.set(f"precalc_stats_{g}", calc_stat_from_logs(stat_logs))
+    print("[预热] 完成！")
 
 def background_refresh():
     while True:
@@ -482,14 +543,49 @@ def background_refresh():
 class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+        # 快速响应健康检查
+        if self.path == '/health':
+            if os.path.exists("/tmp/ready"):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(503)
+                self.end_headers()
+            return
+        if self.path == '/api/time':
+            tron_ts = get_tron_timestamp()
+            if tron_ts is None:
+                tron_ts = int(time.time())
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(f'{{"tron_ts": {tron_ts}}}'.encode("utf-8"))
+            return
 
-        print("A进入do_GET")
-
-        try:
-
-            print("收到网页请求")
-
+        # --- 新增：处理前端的数据自动刷新请求 ---
+        if self.path == '/api/data':
             all_data = {}
+            for g in GAMES:
+                all_data[g] = load_realtime_from_csv(g)
+            tron_ts = get_tron_timestamp() or int(time.time())
+            
+            # 重新生成实时数据 HTML
+            realtime_html = self.build_realtime_html(all_data, tron_ts)
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            # 将 HTML 包装成 JSON 返回
+            response = json.dumps({"html": realtime_html})
+            self.wfile.write(response.encode("utf-8"))
+            return
+        # --- 新增结束 ---
+
+        # 下面是原有的网页渲染逻辑...
+        try:
+            all_data = {}
+            # ... (后面保持你原有的代码不变)
             all_stats = {}
 
             print("B1读取预测日志")
@@ -510,15 +606,16 @@ class Handler(BaseHTTPRequestHandler):
 
                 all_data[g] = data
 
-                game_logs = predict_logs.get(g, [])
-
-                all_stats[g] = calc_stat_from_logs(game_logs)
-
+                all_stats[g] = cache.get(f"precalc_stats_{g}") or {"total": 0, "hits": 0, "misses": 0, "hit_rate": 0, "max_win": 0, "max_lose": 0, "current_status": "无"}
 
             print("C开始生成实时页面")
 
+            # 获取 TRON 链上时间，传递给前端
+            tron_ts = get_tron_timestamp()
+            if tron_ts is None:
+                tron_ts = int(time.time())
 
-            realtime_html = self.build_realtime_html(all_data)
+            realtime_html = self.build_realtime_html(all_data, tron_ts)
 
             stats_html = self.build_stats_html(all_stats)
 
@@ -533,7 +630,8 @@ class Handler(BaseHTTPRequestHandler):
                 realtime_html,
                 stats_html,
                 streak_html,
-                trend_history_html
+                trend_history_html,
+                tron_ts
             )
 
 
@@ -570,31 +668,45 @@ class Handler(BaseHTTPRequestHandler):
             )
 
 
-    
-    def build_realtime_html(self, all_data):
+    def build_realtime_html(self, all_data, tron_ts):
         html = ""
         for g in GAMES:
             data = all_data.get(g, [])
             latest = data[-1] if data else {}
             display_name = GAME_DISPLAY_NAMES.get(g, g)
-            
-            remaining, total = get_countdown(g)
+
+                       # --- 1. 确定总时长 ---
+            if g == "6s":
+                total = 6
+            elif g == "9s":
+                total = 9
+            elif g == "15s":
+                total = 15
+            elif g == "30s":
+                total = 30
+            elif g == "1min":
+                total = 60
+            else:
+                total = 30
+
+            # --- 2. 计算剩余时间 ---
+            current = tron_ts % total
+            remaining = total - current
+            if remaining == 0:
+                remaining = total
+
+            # --- 3. 计算进度条 ---
             progress = ((total - remaining) / total) * 100
-            
+
+            # --- 4. 获取其他数据 ---
             current_block = latest.get("block", "-")
             hash6 = latest.get("hash6", "-")
             tail = latest.get("tail", "-")
-            result = latest.get("result", "-")
-            size = latest.get("size", "-")
-
-
-# 实时预测
             predict_info = realtime_predict(current_block, g)
-
             predict = predict_info.get("predict", "-")
-
             predict_block = predict_info.get("predict_block", "-")
-            
+
+            # --- 5. 生成趋势图数据 ---
             trend_data = data[-30:] if len(data) >= 30 else data
             trend_dots = ""
             odd_count = 0
@@ -606,51 +718,55 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     trend_dots += '<span class="trend-dot-platform even">双</span>'
                     even_count += 1
-            
+
             predict_color = "#ff4444" if predict == "单" else "#44bb88"
             suffix_info = f"尾数 {GAME_SUFFIX[g]}"
-            
+
+            # --- 6. 关键修改：将倒计时部分移出 .realtime-item ---
             html += f'''
-            <div class="realtime-item" id="card-{g}">
+            <div class="game-card">
                 <div class="realtime-header">
                     <span class="play-name">{display_name}</span>
-                    <span class="countdown-badge">⏱ <span class="countdown-number" id="cd-{g}">{remaining}</span> 秒</span>
+                    <!-- 倒计时部分：独立于 .realtime-item，不会被自动刷新覆盖 -->
+                    <span class="countdown-badge">
+                        ⏱ <span class="countdown-number" id="cd-{g}">{remaining}</span> 秒
+                    </span>
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="pg-{g}" style="width:{progress}%;"></div>
                 </div>
-                <div class="block-display">
-                    <div class="block-left">
-                        <div class="block-label">📌 已开奖 ({suffix_info})</div>
-                        <div class="block-number">{current_block}</div>
-                        <div class="block-detail">验证 {tail}</div>
+                
+                <!-- 实时数据部分：这才是需要自动刷新的区域 -->
+                <div class="realtime-item">
+                    <div class="block-display">
+                        <div class="block-left">
+                            <div class="block-label">📌 已开奖 ({suffix_info})</div>
+                            <div class="block-number">{current_block}</div>
+                            <div class="block-detail">验证 {tail}</div>
+                        </div>
+                        <div class="block-right">
+                            <div class="block-label">🎯 下注</div>
+                            <div class="block-number">{predict_block}</div>
+                            <div class="block-detail">...{hash6}</div>
+                            <div class="block-result" style="color:{predict_color};font-size:1.8rem;font-weight:900;text-shadow:0 0 20px {predict_color}40;">预测 {predict}</div>
+                        </div>
                     </div>
-                    <div class="block-right">
-                        <div class="block-label">🎯 下注</div>
-                        <div class="block-number">{predict_block}</div>
-                        <div class="block-detail">...{hash6}</div>
-                        <div class="block-result" style="color:{predict_color};font-size:1.8rem;font-weight:900;text-shadow:0 0 20px {predict_color}40;">预测 {predict}</div>
-                    </div>
-                </div>
-                <div class="trend-section">
-                    <div class="trend-header">
-                        <span style="font-size:0.7rem;font-weight:600;color:#555;">📊 往期开奖</span>
-                        <span style="font-size:0.7rem;font-weight:600;color:#888;">单 {odd_count} 双 {even_count}</span>
-                    </div>
-                    <div class="trend-dots">
-                        {trend_dots if trend_dots else '<span style="color:#999;font-size:0.7rem;">暂无数据</span>'}
+                    <div class="trend-section">
+                        <div class="trend-header">
+                            <span style="font-size:0.7rem;font-weight:600;color:#555;">📊 往期开奖</span>
+                            <span style="font-size:0.7rem;font-weight:600;color:#888;">单 {odd_count} 双 {even_count}</span>
+                        </div>
+                        <div class="trend-dots">{trend_dots if trend_dots else '<span style="color:#999;font-size:0.7rem;">暂无数据</span>'}</div>
                     </div>
                 </div>
             </div>
             '''
         return html
-    
     def build_stats_html(self, all_stats):
         html = ""
         for g in GAMES:
             stat = all_stats.get(g, {})
             display_name = GAME_DISPLAY_NAMES.get(g, g)
-            
             html += f'''
             <div class="cardHover stats-item">
                 <div class="play-name">{display_name}</div>
@@ -661,13 +777,12 @@ class Handler(BaseHTTPRequestHandler):
                 <div class="status">当前: {stat.get("current_status", "无")}</div>
             </div>'''
         return html
-    
+
     def build_streak_html(self, predict_logs):
         html = ""
         for g in GAMES:
             game_logs = predict_logs.get(g, [])
             display_name = GAME_DISPLAY_NAMES.get(g, g)
-            
             recent = game_logs[-30:] if len(game_logs) >= 30 else game_logs
             dots = ""
             for log in recent:
@@ -677,14 +792,13 @@ class Handler(BaseHTTPRequestHandler):
                     dots += '<span class="streak-dot miss">×</span>'
                 else:
                     dots += '<span class="streak-dot" style="background:#f0f0f0;color:#999;">-</span>'
-            
             html += f'''
             <div class="streak-item">
                 <div class="play-name">{display_name}</div>
                 <div class="streak-dots">{dots}</div>
             </div>'''
         return html
-    
+
     def build_trend_with_history_html(self, all_data, predict_logs):
         html = ""
         for g in GAMES:
@@ -706,38 +820,26 @@ class Handler(BaseHTTPRequestHandler):
             odd_pct = round(odd_count/total*100) if total > 0 else 0
             even_pct = round(even_count/total*100) if total > 0 else 0
             
-            game_predicts = predict_logs.get(g, [])
-            predict_dict = {}
-            for p in game_predicts:
-                block = p.get("open_block", "")
-                if block:
-                    predict_dict[block] = {
-                        "predict": p.get("predict", "-"),
-                        "result": p.get("result", ""),
-                        "time": p.get("time", "")
-                    }
-            
-            recent_history = list(reversed(history_data[-500:])) if len(history_data) >= 500 else list(reversed(history_data))
-            
+            recent_history = list(reversed(history_data[-10000:])) if len(history_data) >= 500 else list(reversed(history_data))
             history_rows = ""
             consecutive_hits = 0
             
-            for d in recent_history:
+            for i, d in enumerate(recent_history):
                 block = d.get("block", "-")
                 hash6 = d.get("hash6", "-")
                 tail = d.get("tail", "-")
                 actual = d.get("result", "-")
                 size = d.get("size", "-")
                 
-                pred_info = predict_dict.get(block, {})
-                predict = pred_info.get("predict", "-")
-                result_status = pred_info.get("result", "")
-                log_time = pred_info.get("time", "")
-                
-                if not log_time:
-                    log_time = "-"
-                
-                time_str = log_time[-8:] if log_time != "-" else "-"
+                idx = len(history_data) - 1 - i
+                if idx >= 50:
+                    slice_data = history_data[max(0, idx-200):idx]
+                    model = choose_model(slice_data)
+                    predict = model["predict"]
+                    result_status = "命中" if actual == predict else "错误"
+                else:
+                    predict = "-"
+                    result_status = ""
                 
                 if result_status == "命中":
                     consecutive_hits += 1
@@ -756,7 +858,7 @@ class Handler(BaseHTTPRequestHandler):
                 
                 history_rows += f'''
                 <tr>
-                    <td style="font-size:.75rem;padding:4px 6px;text-align:center;">{time_str}</td>
+                    <td style="font-size:.75rem;padding:4px 6px;text-align:center;">-</td>
                     <td style="font-size:.75rem;padding:4px 6px;text-align:center;font-weight:600;">{block}</td>
                     <td style="font-size:.75rem;padding:4px 6px;text-align:center;font-weight:600;color:#1a3a5c;">{hash6}</td>
                     <td style="font-size:.75rem;padding:4px 6px;text-align:center;font-weight:600;color:#1a3a5c;">{actual}</td>
@@ -793,10 +895,8 @@ class Handler(BaseHTTPRequestHandler):
                     </div>
                 </div>
             </div>'''
-        
         return html
-    
-    def build_full_page(self, realtime_html, stats_html, streak_html, trend_history_html):
+    def build_full_page(self, realtime_html, stats_html, streak_html, trend_history_html, tron_ts):
         return f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -907,36 +1007,84 @@ body{{font-family:'Segoe UI','PingFang SC',Arial,sans-serif;background:linear-gr
     <div class="trend-grid">{trend_history_html}</div>
 </div>
 
-<script>
-const countdowns = {{
-    "6s": 6,
-    "9s": 9,
-    "15s": 15,
-    "30s": 30,
-    "1min": 60
-}};
 
-function updateAllCountdowns() {{
-    const now = Math.floor(Date.now() / 1000);
-    for (const [game, total] of Object.entries(countdowns)) {{
-        const current = now % total;
-        let remaining = total - current;
-        if (remaining === 0) remaining = total;
-        
-        const el = document.getElementById('cd-' + game);
-        const pg = document.getElementById('pg-' + game);
-        if (el) el.textContent = remaining;
-        if (pg) {{
-            const progress = ((total - remaining) / total) * 100;
-            pg.style.width = progress + '%';
+            <script>
+                // 1. 初始化链上时间偏移量
+                var TRON_TIMESTAMP = {tron_ts};
+                var PAGE_LOAD_LOCAL = Math.floor(Date.now() / 1000);
+                var TRON_OFFSET = TRON_TIMESTAMP - PAGE_LOAD_LOCAL;
+
+                // 2. 每30秒后台校准一次时间，防止本地时间漂移
+                setInterval(function() {{
+                    fetch('/api/time').then(function(r) {{ return r.json(); }}).then(function(d) {{
+                        TRON_OFFSET = d.tron_ts - Math.floor(Date.now() / 1000);
+                    }}).catch(function(){{}});
+                }}, 30000);
+
+                // 3. 倒计时核心逻辑
+                var countdowns = {{
+                    "6s": 6,
+                    "9s": 9,
+                    "15s": 15,
+                    "30s": 30,
+                    "1min": 60
+                }};
+    function updateAllCountdowns() {{
+        for (const [game, total] of Object.entries(countdowns)) {{
+            let el = document.getElementById('cd-' + game);
+            if (!el) continue;
+            let remaining = parseInt(el.textContent) || total;
+            remaining -= 1;
+            if (remaining <= 0) {{
+                remaining = total;
+                setTimeout(function(){{ window.location.reload(); }}, 500);
+            }}
+            el.textContent = remaining;
+            const pg = document.getElementById('pg-' + game);
+            if (pg) pg.style.width = ((total - remaining) / total * 100) + '%';
         }}
     }}
-}}
-
-setInterval(updateAllCountdowns, 1000);
-updateAllCountdowns();
-
-setTimeout(function(){{ window.location.reload(); }}, 8000);
+                // 4. 立即执行一次，然后每秒更新倒计时
+                updateAllCountdowns();
+                setInterval(updateAllCountdowns, 1000);
+        // 每秒检查新区块，发现后自动刷新
+    let lastBlocks = {{}};
+    setInterval(function() {{
+        fetch('/api/latest').then(r => r.json()).then(d => {{
+            let changed = false;
+            for (const [game, data] of Object.entries(d)) {{
+                if (lastBlocks[game] && lastBlocks[game] !== data.block) {{
+                    changed = true;
+                }}
+                lastBlocks[game] = data.block;
+            }}
+            if (changed) window.location.reload();
+        }}).catch(()=>{{}});
+    }}, 1000);
+                // 5. 数据自动刷新（只更新数据卡片，绝不碰倒计时）
+                function autoRefreshData() {{
+                    fetch('/api/data')
+                        .then(function(response) {{ return response.json(); }})
+                        .then(function(data) {{
+                            var tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = data.html;
+                            
+                            var newCards = tempDiv.querySelectorAll('.realtime-item');
+                            var oldCards = document.querySelectorAll('.realtime-item');
+                            
+                            if (newCards.length === oldCards.length) {{
+                                for (var i = 0; i < newCards.length; i++) {{
+                                    oldCards[i].innerHTML = newCards[i].innerHTML;
+                                }}
+                            }}
+                        }})
+                        .catch(function(err) {{ console.log('自动刷新数据失败:', err); }});
+                }}
+                
+                // 每3秒自动获取一次最新数据
+                setInterval(autoRefreshData, 3000);
+            </script>
+    
 </script>
 </body>
 </html>'''
@@ -958,6 +1106,14 @@ def make_ball(n, size=32, animated=True):
 if __name__ == "__main__":
     print("[启动] 正在初始化...")
     preload_all_data()
+        # 预热完成后创建标记文件
+    with open("/tmp/ready", "w") as f:
+        f.write("ok")
+    print("[预热] 完成！")
+    
+    # --- 新增：启动文件变动监控 ---
+    observer = start_file_watcher()
+    # ------------------------------
     
     refresh_thread = threading.Thread(target=background_refresh, daemon=True)
     refresh_thread.start()
@@ -968,7 +1124,7 @@ if __name__ == "__main__":
     
     server = ThreadedHTTPServer(('0.0.0.0', PORT), Handler)
     print(f"[网页] 已启动 http://0.0.0.0:{PORT}")
-    print(f"[提示] 倒计时每秒更新 | 页面每8秒刷新数据")
+    print(f"[提示] 倒计时每秒更新 | 数据文件变动时自动刷新")
     print(f"[玩法] {', '.join([GAME_DISPLAY_NAMES.get(g, g) for g in GAMES])}")
     print(f"[规则] 6秒尾数80 | 9秒尾数60 | 15秒尾数40 | 30秒尾数20 | 1分钟尾数00")
     server.serve_forever()
