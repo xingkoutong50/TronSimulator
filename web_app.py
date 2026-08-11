@@ -11,7 +11,7 @@ from socketserver import ThreadingMixIn
 import requests
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-PORT = 8081
+PORT = int(os.environ.get("PORT", 8080))
 
 # ========== TRON API ==========
 TRON_API = "https://api.trongrid.io/wallet/getnowblock"
