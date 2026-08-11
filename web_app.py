@@ -1213,6 +1213,12 @@ def make_ball(n, size=32, animated=True):
 
 if __name__ == "__main__":
     print("[启动] 正在初始化...")
+    
+    # 先启动采集，避免预热阻塞
+    collector_thread = threading.Thread(target=collector_main, daemon=True)
+    collector_thread.start()
+    print("[采集] 后台采集线程已启动")
+    
     preload_all_data()
     with open("/tmp/ready", "w") as f:
         f.write("ok")
@@ -1223,10 +1229,6 @@ if __name__ == "__main__":
     refresh_thread = threading.Thread(target=background_refresh, daemon=True)
     refresh_thread.start()
     print("[启动] 后台刷新线程已启动（每5秒刷新）")
-    
-    collector_thread = threading.Thread(target=collector_main, daemon=True)
-    collector_thread.start()
-    print("[采集] 后台采集线程已启动")
     
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
