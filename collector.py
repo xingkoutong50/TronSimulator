@@ -54,11 +54,12 @@ GAME_CONFIG = {
 
 
 CSV_FILES = {
-    "6s": "history_6s.csv",
-    "9s": "history_9s.csv",
-    "15s": "history_15s.csv",
-    "30s": "history_30s.csv",
-    "1min": "history_1min.csv"
+    "6s": "/data/history_6s.csv",
+    "9s": "/data/history_9s.csv",
+    "15s": "/data/history_15s.csv",
+    "30s": "/data/history_30s.csv",
+    "1min": "/data/history_1min.csv"
+}: "history_1min.csv"
 }
 
 
