@@ -220,7 +220,7 @@ def fetch_game_block(game):
 
 def load_realtime_from_csv(game):
 
-    filename = f"history_{game}.csv"
+    filename = f"/data/history_{game}.csv"
 
     cache_key = f"realtime_{game}"
 
