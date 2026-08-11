@@ -37,11 +37,11 @@ GAME_SUFFIX = {
 }
 
 GAME_DATA_FILES = {
-    "6s": "game_data/6s.csv",
-    "9s": "game_data/9s.csv",
-    "15s": "game_data/15s.csv",
-    "1min": "game_data/1min.csv",
-    "30s": "game_data/30s.csv",
+    "6s": "/data/history_6s.csv",
+    "9s": "/data/history_9s.csv",
+    "15s": "/data/history_15s.csv",
+    "1min": "/data/history_1min.csv",
+    "30s": "/data/history_30s.csv",
 }
 PREDICT_FILE = "block_prediction_log_v67.csv"
 
