@@ -619,8 +619,11 @@ def collector_main():
         return
     for game in GAMES:
         collector_init_csv(game)
-        interval = GAME_CONFIG[game]["block_interval"]
-        collector_last_blocks[game] = (sync_height // interval) * interval
+        suffix = GAME_CONFIG[game]["suffix"]
+        target = sync_height
+        while target % 20 != suffix and target > 0:
+            target -= 1
+        collector_last_blocks[game] = target
         print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
     print("[采集] 启动完成")
     while True:
