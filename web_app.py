@@ -492,11 +492,11 @@ API_URL = "https://api.trongrid.io/wallet/getnowblock"
 BLOCK_API = "https://api.trongrid.io/wallet/getblockbynum"
 
 GAME_CONFIG = {
-    "6s": {"block_interval": 2},
-    "9s": {"block_interval": 3},
-    "15s": {"block_interval": 5},
-    "30s": {"block_interval": 10},
-    "1min": {"block_interval": 20},
+    "6s": {"suffix": 80},
+    "9s": {"suffix": 60},
+    "15s": {"suffix": 40},
+    "30s": {"suffix": 20},
+    "1min": {"suffix": 0},
 }
 
 collector_csv_files = {
