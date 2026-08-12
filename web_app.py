@@ -6,7 +6,7 @@ import threading
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-
+from datetime import datetime
 # 第三方库
 import requests
 from watchdog.observers import Observer
@@ -505,6 +505,114 @@ def calc_stat_from_logs(game_logs):
         "max_lose": max_lose,
         "current_status": current_status
     }
+
+# ========== 采集器配置 ==========
+API_URL = "https://api.trongrid.io/wallet/getnowblock"
+BLOCK_API = "https://api.trongrid.io/wallet/getblockbynum"
+
+GAME_CONFIG = {
+    "6s": {"block_interval": 2},
+    "9s": {"block_interval": 3},
+    "15s": {"block_interval": 5},
+    "30s": {"block_interval": 10},
+    "1min": {"block_interval": 20},
+}
+
+collector_csv_files = {
+    "6s": "/data/history_6s.csv",
+    "9s": "/data/history_9s.csv",
+    "15s": "/data/history_15s.csv",
+    "30s": "/data/history_30s.csv",
+    "1min": "/data/history_1min.csv",
+}
+
+collector_last_blocks = {g: None for g in GAMES}
+collector_locks = {g: threading.Lock() for g in GAMES}
+
+def collector_get_now_block():
+    try:
+        r = requests.get(API_URL, timeout=10)
+        data = r.json()
+        return data["block_header"]["raw_data"]["number"], data["blockID"]
+    except Exception as e:
+        print(f"[TRON] 获取最新区块失败: {e}")
+        return None, None
+
+def collector_get_block_hash(height):
+    try:
+        r = requests.post(BLOCK_API, json={"num": height}, timeout=10)
+        return r.json().get("blockID")
+    except Exception as e:
+        print(f"[TRON] 获取区块 {height} 失败: {e}")
+        return None
+
+def collector_analyze_hash(block_hash):
+    tail6 = block_hash[-6:]
+    number = 0
+    for c in reversed(block_hash):
+        if c.isdigit():
+            number = int(c)
+            break
+    odd_even = "单" if number % 2 else "双"
+    big_small = "大" if number >= 5 else "小"
+    return tail6, number, odd_even, big_small
+
+def collector_init_csv(game):
+    filename = collector_csv_files[game]
+    if not os.path.exists(filename):
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["时间", "区块高度", "Hash", "Hash尾6", "尾数", "单双", "大小"])
+
+def collector_save_data(game, height, block_hash, tail6, number, odd_even, big_small):
+    filename = collector_csv_files[game]
+    with open(filename, "a", newline="", encoding="utf-8", buffering=1) as f:
+        writer = csv.writer(f)
+        writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), height, block_hash, tail6, number, odd_even, big_small])
+        f.flush()
+
+def collector_run_all_games():
+    current_height, _ = collector_get_now_block()
+    if current_height is None:
+        return
+    for game in GAMES:
+        try:
+            with collector_locks[game]:
+                interval = GAME_CONFIG[game]["block_interval"]
+                target_height = (current_height // interval) * interval
+                if collector_last_blocks[game] == target_height:
+                    continue
+                block_hash = collector_get_block_hash(target_height)
+                if block_hash is None:
+                    continue
+                tail6, number, odd_even, big_small = collector_analyze_hash(block_hash)
+                print(f"[采集] {game} 区块:{target_height} 尾数:{number} {odd_even}{big_small}")
+                collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
+                collector_last_blocks[game] = target_height
+        except Exception as e:
+            print(f"[采集错误] {game}: {e}")
+
+def collector_main():
+    print("[采集] 正在初始化...")
+    sync_height, _ = collector_get_now_block()
+    if sync_height is None:
+        print("[采集错误] 无法连接TRON节点")
+        return
+    for game in GAMES:
+        collector_init_csv(game)
+        interval = GAME_CONFIG[game]["block_interval"]
+        collector_last_blocks[game] = (sync_height // interval) * interval
+        print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
+    print("[采集] 启动完成")
+    while True:
+        try:
+            collector_run_all_games()
+        except Exception as e:
+            print(f"[采集严重错误] {e}")
+        time.sleep(1)
+
+
+
 
 def preload_all_data():
     print("[预加载] 开始加载所有数据...")
