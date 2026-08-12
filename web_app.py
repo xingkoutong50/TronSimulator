@@ -640,8 +640,9 @@ def background_refresh():
     while True:
         time.sleep(5)
         try:
-            cache.clear()
             for g in GAMES:
+                cache.cache.pop(f"realtime_{g}", None)
+                cache.cache.pop(f"game_history_{g}", None)
                 load_realtime_from_csv(g)
                 load_game_history(g)
         except:
