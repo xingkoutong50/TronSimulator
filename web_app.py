@@ -566,28 +566,33 @@ def collector_run_all_games():
         except Exception as e:
             print(f"[采集错误] {game}: {e}"))
 
-def collector_main():
-    print("[采集] 正在初始化...")
-    sync_height, _ = collector_get_now_block()
-    if sync_height is None:
-        print("[采集错误] 无法连接TRON节点")
+def collector_run_all_games():
+    current_height, _ = collector_get_now_block()
+    if current_height is None:
         return
-    for game in GAMES:
-        collector_init_csv(game)
-        suffix = GAME_CONFIG[game]["suffix"]
-        target = sync_height
-        while target % 20 != suffix and target > 0:
-            target -= 1
-        collector_last_blocks[game] = target
-        print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
-    print("[采集] 启动完成")
-    while True:
-        try:
-            collector_run_all_games()
-        except Exception as e:
-            print(f"[采集严重错误] {e}")
-        time.sleep(1)
 
+    for game in GAMES:
+        try:
+            with collector_locks[game]:
+                suffix = GAME_CONFIG[game]["suffix"]
+                target_height = current_height
+                # 往前找最近的一个尾数匹配区块
+                while target_height % 20 != suffix and target_height > 0:
+                    target_height -= 1
+                
+                if collector_last_blocks[game] == target_height:
+                    continue
+                
+                block_hash = collector_get_block_hash(target_height)
+                if block_hash is None:
+                    continue
+                
+                tail6, number, odd_even, big_small = collector_analyze_hash(block_hash)
+                print(f"[采集] {game} 区块:{target_height} 尾数:{number} {odd_even}{big_small}")
+                collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
+                collector_last_blocks[game] = target_height
+        except Exception as e:
+            print(f"[采集错误] {game}: {e}")
 
 
 
