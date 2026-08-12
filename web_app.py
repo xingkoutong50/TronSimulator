@@ -566,35 +566,6 @@ def collector_run_all_games():
         except Exception as e:
             print(f"[采集错误] {game}: {e}")
 
-def collector_run_all_games():
-    current_height, _ = collector_get_now_block()
-    if current_height is None:
-        return
-
-    for game in GAMES:
-        try:
-            with collector_locks[game]:
-                suffix = GAME_CONFIG[game]["suffix"]
-                target_height = current_height
-                # 往前找最近的一个尾数匹配区块
-                while target_height % 20 != suffix and target_height > 0:
-                    target_height -= 1
-                
-                if collector_last_blocks[game] == target_height:
-                    continue
-                
-                block_hash = collector_get_block_hash(target_height)
-                if block_hash is None:
-                    continue
-                
-                tail6, number, odd_even, big_small = collector_analyze_hash(block_hash)
-                print(f"[采集] {game} 区块:{target_height} 尾数:{number} {odd_even}{big_small}")
-                collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
-                collector_last_blocks[game] = target_height
-        except Exception as e:
-            print(f"[采集错误] {game}: {e}"
-
-
 
 def preload_all_data():
     print("[预加载] 开始加载所有数据...")
