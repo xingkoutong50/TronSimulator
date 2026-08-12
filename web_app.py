@@ -583,22 +583,27 @@ def collector_save_data(game, height, block_hash, tail6, number, odd_even, big_s
 
 def collector_run_all_games():
     current_height, _ = collector_get_now_block()
-
     if current_height is None:
         return
-
-    print("[当前TRON高度]", current_height)
 
     for game in GAMES:
         try:
             with collector_locks[game]:
-                interval = GAME_CONFIG[game]["block_interval"]
-                target_height = (current_height // interval) * interval
+                suffix = GAME_CONFIG[game]["suffix"]
+                # 从当前高度往前找尾数匹配的区块
+                target_height = current_height
+                while target_height % 20 != suffix:
+                    target_height -= 1
+                    if current_height - target_height > 300:
+                        break
+                
                 if collector_last_blocks[game] == target_height:
                     continue
+                
                 block_hash = collector_get_block_hash(target_height)
                 if block_hash is None:
                     continue
+                
                 tail6, number, odd_even, big_small = collector_analyze_hash(block_hash)
                 print(f"[采集] {game} 区块:{target_height} 尾数:{number} {odd_even}{big_small}")
                 collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
