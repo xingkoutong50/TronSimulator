@@ -564,7 +564,7 @@ def collector_run_all_games():
                 collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
                 collector_last_blocks[game] = target_height
         except Exception as e:
-            print(f"[采集错误] {game}: {e}"))
+            print(f"[采集错误] {game}: {e}")
 
 def collector_run_all_games():
     current_height, _ = collector_get_now_block()
