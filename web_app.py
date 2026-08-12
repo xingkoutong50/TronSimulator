@@ -602,8 +602,12 @@ def collector_save_data(game, height, block_hash, tail6, number, odd_even, big_s
 
 def collector_run_all_games():
     current_height, _ = collector_get_now_block()
+
     if current_height is None:
         return
+
+    print("[当前TRON高度]", current_height)
+
     for game in GAMES:
         try:
             with collector_locks[game]:
