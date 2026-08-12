@@ -549,7 +549,7 @@ def collector_run_all_games():
                 suffix = GAME_CONFIG[game]["suffix"]
                 target_height = current_height
                 # 往前找最近的一个尾数匹配区块
-                while target_height % 20 != suffix and target_height > 0:
+                while target_height % 100 != suffix and target_height > 0:
                     target_height -= 1
                 
                 if collector_last_blocks[game] == target_height:
