@@ -547,12 +547,10 @@ def collector_run_all_games():
         try:
             with collector_locks[game]:
                 suffix = GAME_CONFIG[game]["suffix"]
-                # 从当前高度往前找尾数匹配的区块
                 target_height = current_height
-                while target_height % 20 != suffix:
+                # 往前找最近的一个尾数匹配区块
+                while target_height % 20 != suffix and target_height > 0:
                     target_height -= 1
-                    if current_height - target_height > 300:
-                        break
                 
                 if collector_last_blocks[game] == target_height:
                     continue
@@ -566,7 +564,7 @@ def collector_run_all_games():
                 collector_save_data(game, target_height, block_hash, tail6, number, odd_even, big_small)
                 collector_last_blocks[game] = target_height
         except Exception as e:
-            print(f"[采集错误] {game}: {e}")
+            print(f"[采集错误] {game}: {e}"))
 
 def collector_main():
     print("[采集] 正在初始化...")
