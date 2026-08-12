@@ -222,54 +222,35 @@ def load_realtime_from_csv(game):
 
     filename = f"/data/history_{game}.csv"
 
-    cache_key = f"realtime_{game}"
-
-    cached = cache.get(cache_key)
-
-    if cached is not None:
-        return cached
-
-
     data = []
-
 
     if os.path.exists(filename):
         try:
-            # 核心修改：使用 'r' 模式打开，并强制刷新文件指针
             with open(filename, "r", encoding="utf-8", errors="ignore") as f:
-                # 确保每次读取都从文件最新位置开始
-                f.seek(0, os.SEEK_END) 
-                f.seek(0, os.SEEK_SET)
-                
+
                 reader = csv.reader(f)
                 header = next(reader, None)
+
                 for row in reader:
                     if len(row) < 7:
                         continue
-                    try:
-                        data.append({
-                            "block": row[1],
-                            "hash6": row[3],
-                            "tail": row[4],
-                            "result": row[5],
-                            "size": row[6],
-                        })
-                    except:
-                        continue
+
+                    data.append({
+                        "block": row[1],
+                        "hash6": row[3],
+                        "tail": row[4],
+                        "result": row[5],
+                        "size": row[6],
+                    })
+
         except:
             pass
 
 
-    # 只使用 collector.py 生成的数据
-    # 不再连接TRON接口补数据
-
-
-
     if len(data) > 500:
-
         data = data[-100:]
 
-
+    return data
     cache.set(
         cache_key,
         data
