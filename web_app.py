@@ -346,7 +346,7 @@ def realtime_predict(block_hash, game):
 
         count = 0
 
-        while next_block % suffix != 0 and count < 20:
+        while next_block % 20 != suffix and count < 20:
             next_block += 1
             count += 1
 
