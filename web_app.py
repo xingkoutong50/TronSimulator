@@ -328,68 +328,25 @@ def load_game_history(game):
     return data
 
 def realtime_predict(block_hash, game):
-
     if not block_hash:
-        return {
-            "predict": "-",
-            "model": "-",
-            "predict_block": "-"
-        }
+        return {"predict": "-", "model": "-", "predict_block": "-"}
 
     try:
         current_block = int(block_hash)
-
-        suffix = GAME_SUFFIX.get(game, 0)
-
-        # 限制搜索范围，防止死循环
-        next_block = current_block + 1
-
-        count = 0
-
-        while next_block % 20 != suffix and count < 20:
-            next_block += 1
-            count += 1
-
-        predict_block = str(next_block)
-
+        predict_block = str(current_block + 20)
     except Exception:
-
         predict_block = "-"
 
-
-    # 根据区块hash最后数字预测单双
-
     last_num = None
-
     for c in reversed(str(block_hash)):
-
         if c.isdigit():
-
             last_num = int(c)
-
             break
-
-
     if last_num is None:
-
         last_num = 0
-
-
     predict = "单" if last_num % 2 else "双"
 
-
-    return {
-
-        "predict": predict,
-
-        "model": "Hash末位",
-
-        "predict_block": predict_block,
-
-        "last_num": last_num
-
-    }
-
+    return {"predict": predict, "model": "Hash末位", "predict_block": predict_block, "last_num": last_num}
 
 def choose_model(data):
     best = None
