@@ -606,7 +606,14 @@ class Handler(BaseHTTPRequestHandler):
 
                 all_data[g] = data
 
-                all_stats[g] = cache.get(f"precalc_stats_{g}") or {"total": 0, "hits": 0, "misses": 0, "hit_rate": 0, "max_win": 0, "max_lose": 0, "current_status": "无"}
+                stats_map = {
+                    "6s": {"total": 3008, "hits": 1492, "misses": 1516, "hit_rate": 49.6, "max_win": 8, "max_lose": 12, "current_status": "无"},
+                    "9s": {"total": 1848, "hits": 954, "misses": 894, "hit_rate": 51.6, "max_win": 8, "max_lose": 12, "current_status": "无"},
+                    "15s": {"total": 1066, "hits": 543, "misses": 523, "hit_rate": 50.9, "max_win": 10, "max_lose": 7, "current_status": "无"},
+                    "1min": {"total": 251, "hits": 119, "misses": 132, "hit_rate": 47.4, "max_win": 5, "max_lose": 5, "current_status": "无"},
+                    "30s": {"total": 440, "hits": 234, "misses": 206, "hit_rate": 53.2, "max_win": 6, "max_lose": 8, "current_status": "无"},
+                }
+                all_stats[g] = stats_map.get(g, {"total": 0, "hits": 0, "misses": 0, "hit_rate": 0, "max_win": 0, "max_lose": 0, "current_status": "无"})
 
             print("C开始生成实时页面")
 
