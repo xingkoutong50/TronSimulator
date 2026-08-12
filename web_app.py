@@ -548,9 +548,11 @@ def collector_run_all_games():
             with collector_locks[game]:
                 suffix = GAME_CONFIG[game]["suffix"]
                 target_height = current_height
-                # 往前找最近的一个尾数匹配区块
-                while target_height % 100 != suffix and target_height > 0:
-                    target_height -= 1
+                # 往后找最近的一个尾数匹配区块
+                while target_height % 100 != suffix:
+                    target_height += 1
+                    if target_height - current_height > 100:
+                        break
                 
                 if collector_last_blocks[game] == target_height:
                     continue
