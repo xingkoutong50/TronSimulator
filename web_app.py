@@ -808,12 +808,22 @@ class Handler(BaseHTTPRequestHandler):
             progress = ((total - remaining) / total) * 100
 
             # --- 4. 获取其他数据 ---
-            current_block = latest.get("block", "-")
-            hash6 = latest.get("hash6", "-")
-            tail = latest.get("tail", "-")
-            predict_info = realtime_predict(current_block, g)
-            predict = predict_info.get("predict", "-")
-            predict_block = predict_info.get("predict_block", "-")
+             current_block = latest.get("block", "-")
+             hash6 = latest.get("hash6", "-")
+             tail = latest.get("tail", "-")
+
+             # 使用历史模型预测
+             if len(data) >= 50:
+                 model = choose_model(data)
+                 predict = model.get("predict", "双")
+             else:
+                 predict = "双"
+
+             predict_info = realtime_predict(current_block, g)
+             predict_block = predict_info.get("predict_block", "-")     
+
+
+            
 
             # --- 5. 生成趋势图数据 ---
             trend_data = data[-30:] if len(data) >= 30 else data
