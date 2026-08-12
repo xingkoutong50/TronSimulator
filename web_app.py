@@ -652,15 +652,25 @@ def preload_all_data():
 
 def background_refresh():
     while True:
-        time.sleep(5)
+        time.sleep(300)
         try:
             for g in GAMES:
                 cache.cache.pop(f"realtime_{g}", None)
                 cache.cache.pop(f"game_history_{g}", None)
                 load_realtime_from_csv(g)
                 load_game_history(g)
-        except:
-            pass
+                # 重新计算策略统计
+                history_data = load_game_history(g)
+                stat_logs = []
+                for i in range(50, len(history_data)):
+                    slice_data = history_data[max(0, i-200):i]
+                    model = choose_model(slice_data)
+                    actual = history_data[i]["result"]
+                    stat_logs.append({"result": "命中" if actual == model["predict"] else "错误"})
+                cache.set(f"precalc_stats_{g}", calc_stat_from_logs(stat_logs))
+            print("[刷新] 策略统计已更新")
+        except Exception as e:
+            print(f"[刷新错误] {e}")
 
 # ========== Handler ==========
 class Handler(BaseHTTPRequestHandler):
