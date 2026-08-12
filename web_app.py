@@ -567,6 +567,31 @@ def collector_run_all_games():
             print(f"[采集错误] {game}: {e}")
 
 
+def collector_main():
+    print("[采集] 正在初始化...")
+    sync_height, _ = collector_get_now_block()
+    if sync_height is None:
+        print("[采集错误] 无法连接TRON节点")
+        return
+    for game in GAMES:
+        collector_init_csv(game)
+        suffix = GAME_CONFIG[game]["suffix"]
+        target = sync_height
+        while target % 20 != suffix and target > 0:
+            target -= 1
+        collector_last_blocks[game] = target
+        print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
+    print("[采集] 启动完成")
+    while True:
+        try:
+            collector_run_all_games()
+        except Exception as e:
+            print(f"[采集严重错误] {e}")
+        time.sleep(1)
+
+
+
+
 def preload_all_data():
     print("[预加载] 开始加载所有数据...")
     for g in GAMES:
