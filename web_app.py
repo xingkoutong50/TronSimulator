@@ -808,19 +808,19 @@ class Handler(BaseHTTPRequestHandler):
             progress = ((total - remaining) / total) * 100
 
             # --- 4. 获取其他数据 ---
-             current_block = latest.get("block", "-")
-             hash6 = latest.get("hash6", "-")
-             tail = latest.get("tail", "-")
+            current_block = latest.get("block", "-")
+            hash6 = latest.get("hash6", "-")
+            tail = latest.get("tail", "-")
 
-             # 使用历史模型预测
-             if len(data) >= 50:
+            # 使用历史模型预测
+            if len(data) >= 50:
                  model = choose_model(data)
                  predict = model.get("predict", "双")
-             else:
+            else:
                  predict = "双"
 
-             predict_info = realtime_predict(current_block, g)
-             predict_block = predict_info.get("predict_block", "-")     
+            predict_info = realtime_predict(current_block, g)
+            predict_block = predict_info.get("predict_block", "-")     
 
 
             
