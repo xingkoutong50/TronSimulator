@@ -1118,6 +1118,11 @@ if __name__ == "__main__":
     refresh_thread = threading.Thread(target=background_refresh, daemon=True)
     refresh_thread.start()
     print("[启动] 后台刷新线程已启动（每5秒刷新）")
+
+    collector_thread = threading.Thread(target=collector_main, daemon=True)
+    collector_thread.start()
+    print("[采集] 后台采集线程已启动")     
+    
     
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
