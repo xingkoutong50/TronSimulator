@@ -577,7 +577,7 @@ def collector_main():
         collector_init_csv(game)
         suffix = GAME_CONFIG[game]["suffix"]
         target = sync_height
-        while target % 20 != suffix and target > 0:
+        while target % 100 != suffix and target > 0:
             target -= 1
         collector_last_blocks[game] = target
         print(f"[采集] {game} 已对齐到区块: {collector_last_blocks[game]}")
