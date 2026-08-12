@@ -530,13 +530,42 @@ collector_last_blocks = {g: None for g in GAMES}
 collector_locks = {g: threading.Lock() for g in GAMES}
 
 def collector_get_now_block():
-    try:
-        r = requests.get(API_URL, timeout=10)
-        data = r.json()
-        return data["block_header"]["raw_data"]["number"], data["blockID"]
-    except Exception as e:
-        print(f"[TRON] 获取最新区块失败: {e}")
-        return None, None
+    import concurrent.futures
+
+    urls = [
+        API_URL,
+        "https://api.tronstack.io/wallet/getnowblock",
+        "https://api.tronpulse.io/wallet/getnowblock"
+    ]
+
+    def get_block(url):
+        try:
+            r = requests.get(url, timeout=3)
+            data = r.json()
+
+            height = data["block_header"]["raw_data"]["number"]
+
+            return height, data.get("blockID")
+
+        except:
+            return None, None
+
+
+    results = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        for result in executor.map(get_block, urls):
+            if result[0]:
+                results.append(result)
+
+
+    if results:
+        # 取最高区块
+        return max(results, key=lambda x: x[0])
+
+
+    print("[TRON] 所有节点获取失败")
+    return None, None
 
 def collector_get_block_hash(height):
     try:
