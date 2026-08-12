@@ -29,11 +29,11 @@ GAME_DISPLAY_NAMES = {
 }
 
 GAME_SUFFIX = {
-    "6s": 2,
-    "9s": 3,
-    "15s": 5,
-    "30s": 10,
-    "1min": 20
+    "6s": 80,
+    "9s": 60,
+    "15s": 40,
+    "30s": 20,
+    "1min": 0
 }
 
 GAME_DATA_FILES = {
